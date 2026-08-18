@@ -1,7 +1,9 @@
 // Hand-rolled SVG node-graph editor with grid snapping, auto-layout,
 // auto-connect and live logic preview.
 import { Edge, Graph, GraphNode, NODE_DEFS, NodeType, Port, newId } from '../model';
-import { Simulator } from './sim';
+import { Simulator, Tri } from './sim';
+
+const triClass = (v: Tri) => (v === null ? 'z' : v ? 'hi' : 'lo');
 
 // All node dimensions are multiples of GRID so block corners land exactly on
 // grid intersections when snapped.
@@ -291,10 +293,11 @@ export class Editor {
   }
 
   private renderEdge(edge: Edge) {
-    const hi = !!this.sim.values.get(edge.from.node);
+    const v = this.sim.values.get(edge.from.node) ?? null;
+    const hi = v === true;
     const d = wirePath(this.portPos(edge.from), this.portPos(edge.to));
     const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    path.classList.add('wire', hi ? 'hi' : 'lo');
+    path.classList.add('wire', triClass(v));
     if (edge.id === this.selected) path.classList.add('selected');
     path.setAttribute('d', d);
     path.addEventListener('pointerdown', (e) => {
@@ -351,12 +354,12 @@ export class Editor {
 
     // live value badge in the header corner of gpio_out / dff
     if (node.type === 'gpio_out' || node.type === 'dff') {
-      const v = this.sim.values.get(node.id) ?? false;
+      const v = this.sim.values.get(node.id) ?? null;
       const badge = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-      badge.classList.add('value-badge', 'corner', v ? 'hi' : 'lo');
+      badge.classList.add('value-badge', 'corner', triClass(v));
       badge.setAttribute('x', String(NODE_W - 6));
       badge.setAttribute('y', '14');
-      badge.textContent = v ? '1' : '0';
+      badge.textContent = v === null ? 'Z' : v ? '1' : '0';
       g.appendChild(badge);
     }
 
@@ -430,11 +433,11 @@ export class Editor {
 
     d.inputs.forEach((port, i) => {
       const drv = this.graph.edges.find((e) => e.to.node === node.id && e.to.port === port);
-      const v = drv ? !!this.sim.values.get(drv.from.node) : false;
+      const v: Tri = drv ? this.sim.values.get(drv.from.node) ?? null : null;
       g.appendChild(this.renderPort(node, port, 0, HEAD_H + i * ROW_H + ROW_H / 2, true, v));
     });
     d.outputs.forEach((port, i) => {
-      const v = !!this.sim.values.get(node.id);
+      const v: Tri = this.sim.values.get(node.id) ?? null;
       g.appendChild(this.renderPort(node, port, NODE_W, HEAD_H + i * ROW_H + ROW_H / 2, false, v));
     });
     this.nodeLayer.appendChild(g);
@@ -458,11 +461,11 @@ export class Editor {
     x: number,
     y: number,
     isInput: boolean,
-    hi = false,
+    v: Tri = null,
   ) {
     const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     const c = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-    c.classList.add('port', hi ? 'hi' : 'lo');
+    c.classList.add('port', triClass(v));
     c.setAttribute('cx', String(x));
     c.setAttribute('cy', String(y));
     c.setAttribute('r', '5');

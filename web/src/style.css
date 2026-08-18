@@ -9,6 +9,8 @@
   --accent2: #a78bfa;
   --hi: #3ddc97;
   --lo: #3c4457;
+  --lo-c: #4f7dd9;
+  --z-c: #e8b23f;
   --danger: #ff6b81;
   font-family: "Avenir Next", -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
 }
@@ -137,12 +139,13 @@ main { flex: 1; display: flex; min-height: 0; }
   user-select: none;
 }
 .port { stroke-width: 1.5; cursor: crosshair; transition: fill 0.12s, stroke 0.12s; }
-.port.lo { fill: #232838; stroke: #4a5470; }
+.port.lo { fill: color-mix(in srgb, var(--lo-c) 45%, #1a1e29); stroke: var(--lo-c); }
 .port.hi {
   fill: var(--hi);
   stroke: #d8fff0;
   filter: drop-shadow(0 0 6px var(--hi));
 }
+.port.z { fill: #232838; stroke: var(--z-c); stroke-dasharray: 2.5 2; }
 .port:hover {
   stroke: var(--accent);
   fill: var(--accent);
@@ -150,13 +153,14 @@ main { flex: 1; display: flex; min-height: 0; }
 }
 .port-label { fill: var(--muted); font-size: 9px; pointer-events: none; user-select: none; }
 
-/* --- wires with live logic level --- */
+/* --- wires with live logic level (H=green / L=blue / Hi-Z=amber dashed) --- */
 .wire { fill: none; stroke-width: 2.25; cursor: pointer; stroke-linecap: round; }
-.wire.lo { stroke: var(--lo); }
+.wire.lo { stroke: var(--lo-c); }
 .wire.hi {
   stroke: var(--hi);
   filter: drop-shadow(0 0 4px color-mix(in srgb, var(--hi) 70%, transparent));
 }
+.wire.z { stroke: var(--z-c); stroke-dasharray: 4 5; opacity: 0.8; }
 .wire.selected { stroke: var(--accent); stroke-width: 3; }
 .wire-flow {
   fill: none;
@@ -177,7 +181,8 @@ main { flex: 1; display: flex; min-height: 0; }
 .value-badge { font-size: 11px; font-weight: 800; text-anchor: middle; user-select: none; }
 .value-badge.corner { text-anchor: end; }
 .value-badge.hi { fill: var(--hi); }
-.value-badge.lo { fill: var(--muted); }
+.value-badge.lo { fill: var(--lo-c); }
+.value-badge.z { fill: var(--z-c); }
 .toggle { cursor: pointer; }
 .toggle-track { fill: #2a3042; stroke: var(--border); transition: fill 0.15s; }
 .toggle.hi .toggle-track {
