@@ -147,16 +147,50 @@ export class Editor {
       if (!layers.has(d)) layers.set(d, []);
       layers.get(d)!.push(n);
     }
-    for (const [d, nodes] of layers) {
-      nodes.sort((a, b) => a.y - b.y);
-      let y = GRID * 2;
-      for (const n of nodes) {
-        n.x = snap(GRID * 2 + d * 200);
-        n.y = snap(y);
-        y += this.nodeHeight(n) + GRID;
+    // crossing reduction: order each layer by the barycenter (average y) of
+    // the nodes it connects to, sweeping left-to-right a few times
+    const sorted = [...layers.entries()].sort((a, b) => a[0] - b[0]);
+    for (let sweep = 0; sweep < 3; sweep++) {
+      for (const [, nodes] of sorted) {
+        const bary = (n: GraphNode): number => {
+          const ys: number[] = [];
+          for (const e of this.graph.edges) {
+            if (e.to.node === n.id) {
+              const s = this.graph.nodes.find((x) => x.id === e.from.node);
+              if (s) ys.push(s.y);
+            }
+            if (e.from.node === n.id) {
+              const s = this.graph.nodes.find((x) => x.id === e.to.node);
+              if (s) ys.push(s.y);
+            }
+          }
+          return ys.length ? ys.reduce((a, b) => a + b, 0) / ys.length : n.y;
+        };
+        nodes.sort((a, b) => bary(a) - bary(b));
+        let y = GRID * 2;
+        for (const n of nodes) {
+          n.y = snap(y);
+          y += this.nodeHeight(n) + GRID;
+        }
       }
     }
+    for (const [d, nodes] of sorted) {
+      for (const n of nodes) n.x = snap(GRID * 2 + d * 200);
+    }
     this.changed();
+    this.render();
+  }
+
+  /** select an edge from outside (connection list panel) */
+  selectEdge(id: string) {
+    this.select(id);
+  }
+
+  deleteEdge(id: string) {
+    this.graph.edges = this.graph.edges.filter((e) => e.id !== id);
+    if (this.selected === id) this.select(null, false);
+    this.changed();
+    this.simulate();
     this.render();
   }
 
@@ -249,6 +283,12 @@ export class Editor {
     this.tempWire.classList.add('wire', 'wire-temp');
     this.edgeLayer.appendChild(this.tempWire);
     this.updateTempWire(this.svgPoint(e));
+    // highlight every port this wire may land on (input ports of other nodes)
+    this.nodeLayer
+      .querySelectorAll<SVGCircleElement>(`circle.port[data-input="1"]`)
+      .forEach((c) => {
+        if (c.dataset.node !== from.node) c.classList.add('target');
+      });
     e.stopPropagation();
   }
 
@@ -275,6 +315,9 @@ export class Editor {
     this.tempWire?.remove();
     this.tempWire = null;
     this.wireFrom = null;
+    this.nodeLayer
+      .querySelectorAll('.port.target')
+      .forEach((c) => c.classList.remove('target'));
   }
 
   private onPointerMove(e: PointerEvent) {
@@ -297,7 +340,7 @@ export class Editor {
   private renderEdge(edge: Edge) {
     const v = this.sim.values.get(edge.from.node) ?? null;
     const hi = v === true;
-    const d = wirePath(this.portPos(edge.from), this.portPos(edge.to));
+    const d = wirePath(this.portPos(edge.from), this.portPos(edge.to), laneOf(edge.id));
     const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
     path.classList.add('wire', triClass(v));
     if (edge.id === this.selected) path.classList.add('selected');
@@ -477,6 +520,8 @@ export class Editor {
     c.setAttribute('cx', String(x));
     c.setAttribute('cy', String(y));
     c.setAttribute('r', '5');
+    c.dataset.input = isInput ? '1' : '0';
+    c.dataset.node = node.id;
     const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
     label.classList.add('port-label');
     label.setAttribute('x', String(isInput ? x + 9 : x - 9));
@@ -497,7 +542,28 @@ export class Editor {
   }
 }
 
-function wirePath(a: { x: number; y: number }, b: { x: number; y: number }): string {
-  const dx = Math.max(30, Math.abs(b.x - a.x) / 2);
-  return `M ${a.x} ${a.y} C ${a.x + dx} ${a.y}, ${b.x - dx} ${b.y}, ${b.x} ${b.y}`;
+function wirePath(
+  a: { x: number; y: number },
+  b: { x: number; y: number },
+  lane = 0,
+): string {
+  // small per-edge lane offset keeps parallel wires visually separated
+  const off = (lane % 5) * 6;
+  if (b.x >= a.x + 40) {
+    const dx = Math.max(30, (b.x - a.x) / 2) + off;
+    return `M ${a.x} ${a.y} C ${a.x + dx} ${a.y}, ${b.x - dx} ${b.y}, ${b.x} ${b.y}`;
+  }
+  // backward edge (feedback): S-route around, dipping below/above the nodes
+  const mid = a.y < b.y ? Math.max(a.y, b.y) + 40 + off : Math.min(a.y, b.y) - 40 - off;
+  const r = 60 + off;
+  return (
+    `M ${a.x} ${a.y} C ${a.x + r} ${a.y}, ${a.x + r} ${mid}, ${(a.x + b.x) / 2} ${mid} ` +
+    `S ${b.x - r} ${mid}, ${b.x - r} ${(mid + b.y) / 2} S ${b.x - r} ${b.y}, ${b.x} ${b.y}`
+  );
+}
+
+function laneOf(id: string): number {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
+  return h % 5;
 }

@@ -2,7 +2,15 @@ import { Editor } from './editor/editor';
 import { GraphNode, NODE_DEFS, NodeType, TRUTH } from './model';
 import { PRESETS } from './presets/presets74';
 import { Bridge, fromHex, toHex } from './serial/bridge';
-import { DB_READY, INPUT_PINS, OUTPUT_PINS, PINS, compile, verifyImage } from './compiler/slg46826';
+import {
+  CELL_INFO,
+  DB_READY,
+  INPUT_PINS,
+  OUTPUT_PINS,
+  PINS,
+  compile,
+  verifyImage,
+} from './compiler/slg46826';
 import { Lang, getLang, setLang, t } from './i18n';
 
 const $ = <T extends HTMLElement>(sel: string) => document.querySelector(sel) as T;
@@ -122,6 +130,62 @@ presetSel.addEventListener('change', () => {
 // --- property panel ------------------------------------------------------
 const propsEl = $('#props');
 
+/** name of whatever drives input i of a node (falls back to inN) */
+function inputName(node: GraphNode, i: number): string {
+  const e = editor.graph.edges.find((ed) => ed.to.node === node.id && ed.to.port === `in${i}`);
+  if (!e) return `in${i}`;
+  const src = editor.graph.nodes.find((n) => n.id === e.from.node);
+  if (!src) return `in${i}`;
+  return src.label ?? NODE_DEFS[src.type].title;
+}
+
+/** tiny boolean expression parser: ! ~ & ^ | ( ) with named variables */
+function parseExpr(src: string, vars: Record<string, number>, nIn: number): number {
+  const s = src.replace(/\s+/g, '');
+  if (!s) throw new Error('empty');
+  let pos = 0;
+  type Ev = (bits: number) => boolean;
+  const expr = (): Ev => {
+    let l = xor();
+    while (s[pos] === '|') { pos++; const r = xor(); const ll = l; l = (b) => ll(b) || r(b); }
+    return l;
+  };
+  const xor = (): Ev => {
+    let l = and();
+    while (s[pos] === '^') { pos++; const r = and(); const ll = l; l = (b) => ll(b) !== r(b); }
+    return l;
+  };
+  const and = (): Ev => {
+    let l = unary();
+    while (s[pos] === '&') { pos++; const r = unary(); const ll = l; l = (b) => ll(b) && r(b); }
+    return l;
+  };
+  const unary = (): Ev => {
+    if (s[pos] === '!' || s[pos] === '~') { pos++; const e = unary(); return (b) => !e(b); }
+    if (s[pos] === '(') {
+      pos++;
+      const e = expr();
+      if (s[pos] !== ')') throw new Error(`')' expected at ${pos}`);
+      pos++;
+      return e;
+    }
+    if (s[pos] === '0') { pos++; return () => false; }
+    if (s[pos] === '1') { pos++; return () => true; }
+    const m = s.slice(pos).match(/^[A-Za-z_][A-Za-z0-9_]*/);
+    if (!m) throw new Error(`unexpected '${s[pos] ?? 'end'}'`);
+    const name = m[0].toLowerCase();
+    if (!(name in vars)) throw new Error(`unknown: ${m[0]}`);
+    pos += m[0].length;
+    const idx = vars[name];
+    return (b) => ((b >> idx) & 1) === 1;
+  };
+  const ev = expr();
+  if (pos !== s.length) throw new Error(`unexpected '${s[pos]}'`);
+  let truth = 0;
+  for (let v = 0; v < 1 << nIn; v++) if (ev(v)) truth |= 1 << v;
+  return truth;
+}
+
 /** friendly truth-table editor: gate presets + clickable output bits */
 function buildTruthEditor(node: GraphNode) {
   const nIn = Number(node.type[3]);
@@ -162,13 +226,42 @@ function buildTruthEditor(node: GraphNode) {
   }
   wrap.appendChild(gateBox);
 
-  // clickable truth table
+  // polarity toggles: invert an input column (remaps the table) or the output
+  const pol = document.createElement('div');
+  pol.className = 'polarity-row';
+  for (let i = 0; i < nIn; i++) {
+    const pb = document.createElement('button');
+    pb.textContent = `~${inputName(node, i)}`;
+    pb.title = t('p_invert_in');
+    pb.addEventListener('click', () => {
+      const old = node.props.truth ?? 0;
+      let nt = 0;
+      for (let v = 0; v < rows; v++) if ((old >> (v ^ (1 << i))) & 1) nt |= 1 << v;
+      node.props.truth = nt;
+      node.label = undefined;
+      editor.refresh();
+      renderProps(node);
+    });
+    pol.appendChild(pb);
+  }
+  const ob = document.createElement('button');
+  ob.textContent = t('p_invert_out');
+  ob.addEventListener('click', () => {
+    node.props.truth = (node.props.truth ?? 0) ^ ((1 << rows) - 1);
+    node.label = undefined;
+    editor.refresh();
+    renderProps(node);
+  });
+  pol.appendChild(ob);
+  wrap.appendChild(pol);
+
+  // clickable truth table (headers show what actually drives each input)
   const table = document.createElement('table');
   table.className = 'truth-table';
   const thead = document.createElement('tr');
   for (let i = nIn - 1; i >= 0; i--) {
     const th = document.createElement('th');
-    th.textContent = `in${i}`;
+    th.textContent = inputName(node, i);
     thead.appendChild(th);
   }
   const thO = document.createElement('th');
@@ -214,10 +307,95 @@ function buildTruthEditor(node: GraphNode) {
   });
   label.appendChild(inp);
   wrap.appendChild(label);
+
+  // custom boolean expression -> truth table
+  const exprLabel = document.createElement('label');
+  exprLabel.textContent = t('p_expr');
+  const exprInp = document.createElement('input');
+  exprInp.placeholder = 'in0 & ~in1 | in2';
+  const exprErr = document.createElement('div');
+  exprErr.className = 'expr-err';
+  exprInp.addEventListener('change', () => {
+    if (!exprInp.value.trim()) return;
+    // variables: in0..inN, a..d aliases, plus the labels of connected drivers
+    const vars: Record<string, number> = {};
+    for (let i = 0; i < nIn; i++) {
+      vars[`in${i}`] = i;
+      vars['abcd'[i]] = i;
+      const nm = inputName(node, i).toLowerCase().replace(/[^a-z0-9_]/g, '');
+      if (nm && !/^\d/.test(nm)) vars[nm] = i;
+    }
+    try {
+      node.props.truth = parseExpr(exprInp.value, vars, nIn);
+      node.label = undefined;
+      exprErr.textContent = '';
+      editor.refresh();
+      renderProps(node);
+    } catch (e) {
+      exprErr.textContent = t('l_expr_err', { msg: (e as Error).message });
+    }
+  });
+  exprLabel.appendChild(exprInp);
+  wrap.appendChild(exprLabel);
+  wrap.appendChild(exprErr);
+  return wrap;
+}
+
+/** macrocell details: current placement + manual cell pinning */
+function buildCellPanel(node: GraphNode) {
+  const wrap = document.createElement('div');
+  const compatible = CELL_INFO.filter((c) => {
+    if (node.type === 'dff') return c.hasDff && c.id !== 'LUT4_0' && !c.id.startsWith('LUT2');
+    const need = Number(node.type[3]);
+    return c.nBits >= need;
+  });
+  const label = document.createElement('label');
+  label.textContent = t('p_cell');
+  const sel = document.createElement('select');
+  const auto = document.createElement('option');
+  auto.value = '';
+  auto.textContent = t('p_cell_auto');
+  sel.appendChild(auto);
+  for (const c of compatible) {
+    const o = document.createElement('option');
+    o.value = c.id;
+    o.textContent = `${c.id} (${c.nBits}bit${c.hasDff ? '+DFF' : ''})`;
+    sel.appendChild(o);
+  }
+  sel.value = node.props.cell ?? '';
+  sel.addEventListener('change', () => {
+    node.props.cell = sel.value || undefined;
+    editor.refresh();
+    renderProps(node);
+  });
+  label.appendChild(sel);
+  wrap.appendChild(label);
+
+  // show the actual placement from a dry-run compile
+  const note = document.createElement('div');
+  note.className = 'cell-note';
+  try {
+    const { placement } = compile(editor.graph);
+    const cell = placement[node.id];
+    if (cell) {
+      note.textContent =
+        t('p_cell_now', { cell }) +
+        ' — ' +
+        t('p_cell_mode', { mode: node.type === 'dff' ? 'DFF' : node.type.toUpperCase() });
+    }
+  } catch {
+    /* incomplete graph: no placement to show */
+  }
+  wrap.appendChild(note);
+  const cnt = document.createElement('div');
+  cnt.className = 'cell-note';
+  cnt.textContent = t('p_cnt_note');
+  wrap.appendChild(cnt);
   return wrap;
 }
 
 function renderProps(node: GraphNode | null) {
+  updateConnList(); // keep selection highlight in sync
   propsEl.innerHTML = '';
   if (!node) {
     propsEl.innerHTML = `<div class="empty">${t('p_select_node')}</div>`;
@@ -249,6 +427,7 @@ function renderProps(node: GraphNode | null) {
   }
   if (node.type.startsWith('lut')) {
     propsEl.appendChild(buildTruthEditor(node));
+    propsEl.appendChild(buildCellPanel(node));
   }
   if (node.type === 'dff') {
     const label = document.createElement('label');
@@ -261,6 +440,7 @@ function renderProps(node: GraphNode | null) {
     });
     label.append(cb, t('p_invert_q'));
     propsEl.appendChild(label);
+    propsEl.appendChild(buildCellPanel(node));
   }
   if (node.type === 'virt_in') {
     const label = document.createElement('label');
@@ -304,6 +484,45 @@ function renderProps(node: GraphNode | null) {
   }
 }
 editor.onSelect = renderProps;
+
+// --- connections panel ---------------------------------------------------
+const connListEl = $('#conn-list');
+function endpointName(nodeId: string, port: string): string {
+  const n = editor.graph.nodes.find((x) => x.id === nodeId);
+  if (!n) return nodeId;
+  const base = n.label ?? (n.props.pin != null ? `${NODE_DEFS[n.type].title} P${n.props.pin}` : NODE_DEFS[n.type].title);
+  const d = NODE_DEFS[n.type];
+  const onlyPort = d.inputs.length + d.outputs.length <= 1;
+  return onlyPort ? base : `${base}.${port}`;
+}
+function updateConnList() {
+  connListEl.innerHTML = '';
+  if (!editor.graph.edges.length) {
+    connListEl.innerHTML = `<div class="empty">${t('conn_empty')}</div>`;
+    return;
+  }
+  for (const e of editor.graph.edges) {
+    const row = document.createElement('div');
+    row.className = 'conn-row' + (editor.selected === e.id ? ' selected' : '');
+    const from = document.createElement('span');
+    from.textContent = endpointName(e.from.node, e.from.port);
+    const arrow = document.createElement('span');
+    arrow.className = 'arrow';
+    arrow.textContent = '→';
+    const to = document.createElement('span');
+    to.textContent = endpointName(e.to.node, e.to.port);
+    const del = document.createElement('button');
+    del.className = 'del';
+    del.textContent = '✕';
+    del.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      editor.deleteEdge(e.id);
+    });
+    row.append(from, arrow, to, del);
+    row.addEventListener('click', () => editor.selectEdge(e.id));
+    connListEl.appendChild(row);
+  }
+}
 renderProps(null);
 
 // --- connection ----------------------------------------------------------
@@ -522,6 +741,7 @@ function updateMeter() {
     gauge(t('m_dff'), dffs, 13) +
     gauge(t('m_pins'), pins, 15) +
     gauge(t('m_virt'), virts, 8);
+  updateConnList();
 }
 
 // --- save / load / share -------------------------------------------------

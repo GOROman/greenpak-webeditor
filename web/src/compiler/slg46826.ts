@@ -43,6 +43,13 @@ export const PINS: PinInfo[] = IO_PADS.map((p) => ({
   matrixInputIndex: p.matrixInputIndex,
 })).sort((a, b) => a.pin - b.pin);
 
+/** physical macrocell catalog for the UI (manual placement dropdown) */
+export const CELL_INFO = LUTS.map((l) => ({
+  id: l.id,
+  nBits: l.nBits,
+  hasDff: !!l.dff,
+}));
+
 /** all logic-usable pins (both directions listed; inputs must be GPIO pads) */
 export const AVAILABLE_PINS: number[] = PINS.map((p) => p.pin);
 export const INPUT_PINS: number[] = PINS.filter((p) => p.inputCapable).map((p) => p.pin);
@@ -101,7 +108,14 @@ export function compile(graph: Graph): CompileResult {
   // --- placement --------------------------------------------------------
   const placements = new Map<string, Placement>();
   const free = new Set(LUTS.map((l) => l.id));
-  const take = (pref: string[], err: string): LutCell => {
+  const take = (pref: string[], err: string, pinned?: string): LutCell => {
+    if (pinned) {
+      // user pinned this node to a specific macrocell
+      if (!pref.includes(pinned)) throw new CompileError(t('c_cell_incompat', { cell: pinned }));
+      if (!free.has(pinned)) throw new CompileError(t('c_cell_taken', { cell: pinned }));
+      free.delete(pinned);
+      return LUTS.find((l) => l.id === pinned)!;
+    }
     for (const id of pref) {
       if (free.has(id)) {
         free.delete(id);
@@ -139,19 +153,19 @@ export function compile(graph: Graph): CompileResult {
         break;
       }
       case 'lut2':
-        p.cell = take(LUT2_PREF, t('c_no_lut'));
+        p.cell = take(LUT2_PREF, t('c_no_lut'), node.props.cell);
         placement[node.id] = p.cell.id;
         break;
       case 'lut3':
-        p.cell = take(LUT3_PREF, t('c_no_lut3'));
+        p.cell = take(LUT3_PREF, t('c_no_lut3'), node.props.cell);
         placement[node.id] = p.cell.id;
         break;
       case 'lut4':
-        p.cell = take(['LUT4_0'], t('c_one_lut4'));
+        p.cell = take(['LUT4_0'], t('c_one_lut4'), node.props.cell);
         placement[node.id] = p.cell.id;
         break;
       case 'dff':
-        p.cell = take(DFF_PREF, t('c_no_dff'));
+        p.cell = take(DFF_PREF, t('c_no_dff'), node.props.cell);
         placement[node.id] = p.cell.id;
         break;
       case 'virt_in': {

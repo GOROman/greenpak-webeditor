@@ -32,6 +32,8 @@ export interface GraphNode {
     virtIndex?: number;
     /** osc: which internal oscillator */
     osc?: 'osc0_2k' | 'osc1_2m' | 'osc2_25m';
+    /** LUT/DFF nodes: pin to a specific physical macrocell (undefined = auto) */
+    cell?: string;
   };
 }
 

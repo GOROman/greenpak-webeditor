@@ -102,6 +102,26 @@ const STRINGS: Record<string, [ja: string, en: string, zh: string]> = {
   c_in_unconnected: ['{name}: 入力が未接続です', '{name}: input is unconnected', '{name}: 输入未连接'],
   c_in_gnd: ['{name}: in{i} が未接続 (GND扱い)', '{name}: in{i} unconnected (treated as GND)', '{name}: in{i} 未连接 (视为GND)'],
   c_no_pins_preset: ['プリセットに割り当てるピンが不足', 'Not enough pins for the preset', '预设可用引脚不足'],
+  c_cell_incompat: ['セル{cell}はこのブロックに使えません', 'Cell {cell} is incompatible with this block', '单元{cell}与此模块不兼容'],
+  c_cell_taken: ['セル{cell}は既に使用されています', 'Cell {cell} is already in use', '单元{cell}已被占用'],
+  // connections panel
+  h_conns: ['接続リスト', 'Connections', '连线列表'],
+  conn_empty: ['接続なし', 'No connections', '无连线'],
+  // truth-table extras
+  p_invert_in: ['入力を反転', 'Invert input', '反相输入'],
+  p_invert_out: ['~OUT', '~OUT', '~OUT'],
+  p_expr: ['論理式 (例: in0 & ~in1 | in2)', 'Expression (e.g. in0 & ~in1 | in2)', '逻辑式 (例: in0 & ~in1 | in2)'],
+  l_expr_err: ['式エラー: {msg}', 'Expression error: {msg}', '表达式错误: {msg}'],
+  // macrocell panel
+  p_cell: ['配置マクロセル', 'Macrocell', '宏单元'],
+  p_cell_auto: ['自動', 'Auto', '自动'],
+  p_cell_now: ['現在の配置: {cell}', 'Placed on: {cell}', '当前配置: {cell}'],
+  p_cell_mode: ['モード: {mode}', 'Mode: {mode}', '模式: {mode}'],
+  p_cnt_note: [
+    'CNT/DLYモードは未対応です (LUT/DFFのみ)',
+    'CNT/DLY modes are not supported yet (LUT/DFF only)',
+    '暂不支持CNT/DLY模式 (仅LUT/DFF)',
+  ],
 };
 
 const LANG_KEY = 'gpweb-lang';

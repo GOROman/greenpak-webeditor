@@ -137,6 +137,17 @@ describe('compile', () => {
     expect(bit(image, 1049)).toBe(1);
   });
 
+  it('honors a manually pinned macrocell and rejects double booking', () => {
+    const mk = (id: string, cell?: string): Graph['nodes'][number] => ({
+      id, type: 'lut2', x: 0, y: 0, props: { truth: TRUTH.AND2, cell },
+    });
+    const { placement } = compile({ nodes: [mk('a', 'LUT3_5')], edges: [] });
+    expect(placement['a']).toBe('LUT3_5');
+    expect(() =>
+      compile({ nodes: [mk('a', 'LUT3_5'), mk('b', 'LUT3_5')], edges: [] }),
+    ).toThrow();
+  });
+
   it('verifyImage ignores the documented mask bytes', () => {
     const a = new Uint8Array(256);
     const b = new Uint8Array(256);
