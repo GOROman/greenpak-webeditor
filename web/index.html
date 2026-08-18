@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>GreenPAK Web Editor</title>
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+<body>
+  <header id="topbar">
+    <h1>GreenPAK Web Editor <span class="chip">SLG46826V</span></h1>
+    <div class="spacer"></div>
+    <select id="preset-select">
+      <option value="">― 74シリーズ プリセット ―</option>
+    </select>
+    <button id="btn-connect">接続</button>
+    <button id="btn-settings" title="I2Cピン設定">⚙</button>
+  </header>
+  <main>
+    <aside id="palette">
+      <h2>ブロック</h2>
+      <div id="palette-buttons"></div>
+      <h2>ツール</h2>
+      <div class="write-buttons">
+        <button id="btn-autolayout">✨ 自動整列</button>
+        <button id="btn-autoconnect">🔗 自動接続</button>
+      </div>
+      <h2>プロパティ</h2>
+      <div id="props"></div>
+      <h2>書き込み</h2>
+      <div class="write-buttons">
+        <button id="btn-write-reg" disabled>レジスタへ書込 (揮発)</button>
+        <button id="btn-write-nvm" disabled>NVMへ書込 (不揮発)</button>
+        <button id="btn-read-nvm" disabled>NVM読出</button>
+      </div>
+    </aside>
+    <section id="canvas"></section>
+    <aside id="right">
+      <h2>ログ</h2>
+      <pre id="log"></pre>
+    </aside>
+  </main>
+  <dialog id="settings-dialog">
+    <form method="dialog">
+      <h2>ブリッジ設定 (M5StampS3)</h2>
+      <label>SDA GPIO <input id="cfg-sda" type="number" min="0" max="48" value="13" /></label>
+      <label>SCL GPIO <input id="cfg-scl" type="number" min="0" max="48" value="15" /></label>
+      <label>I2C周波数 <select id="cfg-freq">
+        <option value="100000">100 kHz</option>
+        <option value="400000">400 kHz</option>
+      </select></label>
+      <label><input id="cfg-save" type="checkbox" checked /> 本体NVSに保存する</label>
+      <menu>
+        <button value="cancel">キャンセル</button>
+        <button value="ok" id="cfg-apply">適用</button>
+      </menu>
+    </form>
+  </dialog>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
