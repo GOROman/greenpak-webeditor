@@ -1,5 +1,6 @@
 // Graph -> 256-byte SLG46826 config image compiler.
 import { Graph, GraphNode } from '../model';
+import { t } from '../i18n';
 import {
   IO_PADS,
   IoPad,
@@ -85,7 +86,7 @@ function sourceIndex(p: Placement): number {
   if (p.node.type === 'osc') return OSC_DEFS[p.node.props.osc ?? 'osc0_2k'].src;
   if (p.pad) {
     if (p.pad.matrixInputIndex < 0)
-      throw new CompileError(`${p.pad.id} は出力専用ピンです (入力に使えません)`);
+      throw new CompileError(t('c_out_only_src', { id: p.pad.id }));
     return p.pad.matrixInputIndex;
   }
   if (p.cell) return OUTPUT_INDEX[p.cell.id];
@@ -126,38 +127,38 @@ export function compile(graph: Graph): CompileResult {
       case 'gpio_in':
       case 'gpio_out': {
         const pin = node.props.pin;
-        if (pin == null) throw new CompileError(`${name}: ピン未指定`);
-        if (usedPins.has(pin)) throw new CompileError(`ピン${pin}が重複しています`);
+        if (pin == null) throw new CompileError(t('c_no_pin', { name }));
+        if (usedPins.has(pin)) throw new CompileError(t('c_pin_dup', { pin }));
         usedPins.add(pin);
         const pad = IO_PADS.find((io) => io.tssopPin === pin);
-        if (!pad) throw new CompileError(`ピン${pin}はGPIOではありません`);
+        if (!pad) throw new CompileError(t('c_not_gpio', { pin }));
         if (node.type === 'gpio_in' && pad.kind !== 'GPIO')
-          throw new CompileError(`${name}: ピン${pin} (${pad.id}) は出力専用です`);
+          throw new CompileError(t('c_out_only', { name, pin, id: pad.id }));
         p.pad = pad;
         placement[node.id] = pad.id;
         break;
       }
       case 'lut2':
-        p.cell = take(LUT2_PREF, 'LUTリソースが不足しています');
+        p.cell = take(LUT2_PREF, t('c_no_lut'));
         placement[node.id] = p.cell.id;
         break;
       case 'lut3':
-        p.cell = take(LUT3_PREF, 'LUT3リソースが不足しています');
+        p.cell = take(LUT3_PREF, t('c_no_lut3'));
         placement[node.id] = p.cell.id;
         break;
       case 'lut4':
-        p.cell = take(['LUT4_0'], 'LUT4は1個しかありません');
+        p.cell = take(['LUT4_0'], t('c_one_lut4'));
         placement[node.id] = p.cell.id;
         break;
       case 'dff':
-        p.cell = take(DFF_PREF, 'DFFリソースが不足しています');
+        p.cell = take(DFF_PREF, t('c_no_dff'));
         placement[node.id] = p.cell.id;
         break;
       case 'virt_in': {
         const vi = node.props.virtIndex;
         if (vi == null || vi < 0 || vi > 7)
-          throw new CompileError(`${name}: 仮想入力番号(0-7)が未指定です`);
-        if (usedVirt.has(vi)) throw new CompileError(`仮想入力${vi}が重複しています`);
+          throw new CompileError(t('c_no_virt', { name }));
+        if (usedVirt.has(vi)) throw new CompileError(t('c_virt_dup', { n: vi }));
         usedVirt.add(vi);
         placement[node.id] = `VIRT${vi}`;
         break;
@@ -201,7 +202,7 @@ export function compile(graph: Graph): CompileResult {
         const pad = p.pad!;
         const src = driverOf(node.id, 'in0');
         if (src == null) {
-          warnings.push(`${name}: 入力が未接続です`);
+          warnings.push(t('c_in_unconnected', { name }));
           break;
         }
         setField(image, pad.cfg.outputMode, 0b00); // push-pull 1x
@@ -239,7 +240,7 @@ export function compile(graph: Graph): CompileResult {
         cell.inputs.forEach((f, i) => {
           const src = i < nIn ? driverOf(node.id, `in${i}`) : GND;
           if (src == null) {
-            if (!dontCare(i)) warnings.push(`${name}: in${i} が未接続 (GND扱い)`);
+            if (!dontCare(i)) warnings.push(t('c_in_gnd', { name, i }));
             setField(image, f, GND);
           } else {
             setField(image, f, src);
@@ -258,7 +259,7 @@ export function compile(graph: Graph): CompileResult {
         const route = (f: { msb: number; lsb: number } | undefined, port: string, fallback: number, required: boolean) => {
           if (!f) return;
           const src = driverOf(node.id, port);
-          if (src == null && required) warnings.push(`${name}: ${port} が未接続`);
+          if (src == null && required) warnings.push(t('c_unconnected', { name, port }));
           setField(image, f, src ?? fallback);
         };
         route(dff.d, 'd', GND, true);

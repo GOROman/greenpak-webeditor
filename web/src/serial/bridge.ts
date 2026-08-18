@@ -1,4 +1,5 @@
 // WebSerial JSON-lines client for the M5StampS3 bridge firmware.
+import { t } from '../i18n';
 
 export interface BridgeResponse {
   ok: boolean;
@@ -20,7 +21,7 @@ export class Bridge {
 
   async connect(): Promise<void> {
     if (!('serial' in navigator)) {
-      throw new Error('WebSerial非対応ブラウザです。Chrome/Edgeを使ってください。');
+      throw new Error(t('e_no_webserial'));
     }
     const port = await navigator.serial.requestPort();
     await port.open({ baudRate: 115200 });
@@ -77,17 +78,17 @@ export class Bridge {
   }
 
   async request(cmd: object, timeoutMs = 15000): Promise<BridgeResponse> {
-    if (!this.writer) throw new Error('未接続です');
+    if (!this.writer) throw new Error(t('e_not_connected'));
     const line = JSON.stringify(cmd);
     const promise = new Promise<string>((resolve, reject) => {
       const timer = setTimeout(() => {
         const i = this.pending.indexOf(handler);
         if (i >= 0) this.pending.splice(i, 1);
-        reject(new Error('応答タイムアウト'));
+        reject(new Error(t('e_timeout')));
       }, timeoutMs);
       const handler = (l: string) => {
         clearTimeout(timer);
-        l ? resolve(l) : reject(new Error('切断されました'));
+        l ? resolve(l) : reject(new Error(t('e_disconnected')));
       };
       this.pending.push(handler);
     });
@@ -95,7 +96,7 @@ export class Bridge {
     await this.writer.write(new TextEncoder().encode(line + '\n'));
     const text = await promise;
     const res = JSON.parse(text) as BridgeResponse;
-    if (!res.ok) throw new Error(res.err ?? 'ブリッジエラー');
+    if (!res.ok) throw new Error(res.err ?? t('e_bridge'));
     return res;
   }
 }

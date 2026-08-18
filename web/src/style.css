@@ -194,13 +194,70 @@ main { flex: 1; display: flex; min-height: 0; }
 .toggle-knob { fill: #aab2c8; }
 .toggle.hi .toggle-knob { fill: var(--hi); filter: drop-shadow(0 0 4px var(--hi)); }
 
-#meter { font-size: 12px; color: var(--muted); }
-.meter-row { display: flex; justify-content: space-between; padding: 2px 0; }
+/* header resource gauges */
+#meter { display: flex; gap: 14px; margin-left: 18px; align-items: center; }
+.gauge { display: flex; align-items: center; gap: 5px; font-size: 10px; color: var(--muted); }
+.g-label { letter-spacing: 0.05em; }
+.g-bar { width: 54px; height: 6px; border-radius: 3px; background: #262b3a; overflow: hidden; }
+.g-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: linear-gradient(90deg, var(--accent), var(--hi));
+  transition: width 0.2s;
+}
+.gauge.over .g-fill { background: var(--danger); }
+.gauge.over .g-num { color: var(--danger); }
+.g-num { font-variant-numeric: tabular-nums; }
 #btn-monitor.connected { border-color: var(--hi); color: var(--hi); }
+
+/* truth table editor */
+.gate-presets { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin: 8px 0; }
+.gate-presets button { padding: 5px 2px; font-size: 11px; }
+.gate-presets button.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+.truth-table {
+  border-collapse: collapse;
+  font-family: "SF Mono", ui-monospace, Menlo, monospace;
+  font-size: 12px;
+  margin: 6px 0;
+  width: 100%;
+}
+.truth-table th, .truth-table td {
+  border: 1px solid var(--border);
+  padding: 3px 0;
+  text-align: center;
+  color: var(--muted);
+}
+.truth-table th { font-size: 10px; background: var(--panel2); }
+.truth-table .out-col { border-left: 2px solid var(--border); }
+.truth-table td.out-col.clickable { cursor: pointer; font-weight: 800; user-select: none; }
+.truth-table td.out-col.hi { color: var(--hi); background: color-mix(in srgb, var(--hi) 12%, transparent); }
+.truth-table td.out-col.lo { color: var(--lo-c); }
+.truth-table td.out-col.clickable:hover { outline: 1px solid var(--accent); }
+.props-title { font-size: 13px; font-weight: 700; margin-bottom: 4px; }
 
 #props label { display: block; font-size: 12px; margin: 8px 0; color: var(--muted); }
 #props input, #props select { width: 100%; margin-top: 4px; }
 #props .empty { color: var(--muted); font-size: 12px; }
+/* bottom log panel */
+#log-panel {
+  height: 140px;
+  flex-shrink: 0;
+  background: var(--panel);
+  border-top: 1px solid var(--border);
+  padding: 6px 14px;
+  overflow-y: auto;
+}
+#log-panel h2 {
+  font-size: 10px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  margin: 0 0 4px;
+}
 #log {
   font-size: 11px;
   font-family: "SF Mono", ui-monospace, Menlo, monospace;

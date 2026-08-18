@@ -4,13 +4,14 @@
 // 74xx pin names (1A, 1B, 1Y, ...).
 import { Graph, GraphNode, TRUTH, newId } from '../model';
 import { INPUT_PINS, OUTPUT_PINS } from '../compiler/slg46826';
+import { t } from '../i18n';
 
 /** sequential pin allocator honoring input-capability and no-reuse */
 function pinAllocator() {
   const used = new Set<number>();
   const next = (pool: number[]): number => {
     const pin = pool.find((p) => !used.has(p));
-    if (pin == null) throw new Error('プリセットに割り当てるピンが不足');
+    if (pin == null) throw new Error(t('c_no_pins_preset'));
     used.add(pin);
     return pin;
   };

@@ -1,8 +1,9 @@
 import { Editor } from './editor/editor';
-import { NODE_DEFS, NodeType, TRUTH } from './model';
+import { GraphNode, NODE_DEFS, NodeType, TRUTH } from './model';
 import { PRESETS } from './presets/presets74';
 import { Bridge, fromHex, toHex } from './serial/bridge';
 import { DB_READY, INPUT_PINS, OUTPUT_PINS, PINS, compile, verifyImage } from './compiler/slg46826';
+import { Lang, getLang, setLang, t } from './i18n';
 
 const $ = <T extends HTMLElement>(sel: string) => document.querySelector(sel) as T;
 
@@ -22,10 +23,32 @@ bridge.onLog = (dir, line) => {
   log(`${dir === 'tx' ? '→' : '←'} ${line}`);
 };
 
-// --- palette ------------------------------------------------------------
+// --- i18n ----------------------------------------------------------------
+function applyI18n() {
+  document.querySelectorAll<HTMLElement>('[data-i18n]').forEach((el) => {
+    el.textContent = t(el.dataset.i18n!);
+  });
+  const bc = $('#btn-connect');
+  bc.textContent = t(bridge.connected ? 'b_disconnect' : 'b_connect');
+  btnMonitor.textContent = t(monitorTimer != null ? 'b_monitor_on' : 'b_monitor_off');
+  updateMeter();
+  editor.onSelect?.(selectedNode());
+}
+const langSel = $('#lang-select') as unknown as HTMLSelectElement;
+langSel.value = getLang();
+langSel.addEventListener('change', () => {
+  setLang(langSel.value as Lang);
+  applyI18n();
+});
+
+function selectedNode(): GraphNode | null {
+  return editor.graph.nodes.find((n) => n.id === editor.selected) ?? null;
+}
+
+// --- palette -------------------------------------------------------------
 const paletteItems: { type: NodeType; label: string; truth?: number }[] = [
-  { type: 'gpio_in', label: 'GPIO入力' },
-  { type: 'gpio_out', label: 'GPIO出力' },
+  { type: 'gpio_in', label: 'GPIO IN' },
+  { type: 'gpio_out', label: 'GPIO OUT' },
   { type: 'lut2', label: 'AND', truth: TRUTH.AND2 },
   { type: 'lut2', label: 'OR', truth: TRUTH.OR2 },
   { type: 'lut2', label: 'NAND', truth: TRUTH.NAND2 },
@@ -35,7 +58,7 @@ const paletteItems: { type: NodeType; label: string; truth?: number }[] = [
   { type: 'lut3', label: 'LUT3' },
   { type: 'lut4', label: 'LUT4' },
   { type: 'dff', label: 'D-FF' },
-  { type: 'virt_in', label: 'I2C入力' },
+  { type: 'virt_in', label: 'I2C IN' },
   { type: 'osc', label: 'OSC' },
   { type: 'vdd', label: 'VDD' },
   { type: 'gnd', label: 'GND' },
@@ -71,14 +94,14 @@ for (const item of paletteItems) {
   paletteBox.appendChild(b);
 }
 
-// --- tools --------------------------------------------------------------
+// --- tools ---------------------------------------------------------------
 $('#btn-autolayout').addEventListener('click', () => editor.autoLayout());
 $('#btn-autoconnect').addEventListener('click', () => {
   const n = editor.autoConnect();
-  log(n ? `自動接続: ${n}本配線しました` : '接続できる未配線ポートがありません', n ? 'ok' : '');
+  log(n ? t('l_autoconnect_done', { n }) : t('l_autoconnect_none'), n ? 'ok' : '');
 });
 
-// --- presets ------------------------------------------------------------
+// --- presets -------------------------------------------------------------
 const presetSel = $('#preset-select') as unknown as HTMLSelectElement;
 for (const p of PRESETS) {
   const o = document.createElement('option');
@@ -92,25 +115,122 @@ presetSel.addEventListener('change', () => {
     editor.setGraph(p.build());
     pushHistory();
     updateMeter();
-    log(`プリセット読込: ${p.name}`, 'ok');
+    log(t('l_preset', { name: p.name }), 'ok');
   }
 });
 
-// --- property panel -----------------------------------------------------
+// --- property panel ------------------------------------------------------
 const propsEl = $('#props');
-editor.onSelect = (node) => {
+
+/** friendly truth-table editor: gate presets + clickable output bits */
+function buildTruthEditor(node: GraphNode) {
+  const nIn = Number(node.type[3]);
+  const rows = 1 << nIn;
+  const wrap = document.createElement('div');
+  wrap.className = 'truth-editor';
+
+  // gate presets
+  const gates: [string, number][] =
+    nIn === 2
+      ? [
+          ['AND', TRUTH.AND2], ['OR', TRUTH.OR2], ['NAND', TRUTH.NAND2],
+          ['NOR', TRUTH.NOR2], ['XOR', TRUTH.XOR2], ['XNOR', TRUTH.XNOR2],
+          ['NOT', TRUTH.INV], ['BUF', TRUTH.BUF],
+        ]
+      : nIn === 3
+        ? [
+            ['AND', 0x80], ['OR', 0xfe], ['NAND', 0x7f], ['NOR', 0x01],
+            ['XOR', 0x96], ['MUX', 0xca],
+          ]
+        : [
+            ['AND', 0x8000], ['OR', 0xfffe], ['NAND', 0x7fff], ['NOR', 0x0001],
+            ['XOR', 0x6996],
+          ];
+  const gateBox = document.createElement('div');
+  gateBox.className = 'gate-presets';
+  for (const [nm, tr] of gates) {
+    const gb = document.createElement('button');
+    gb.textContent = nm;
+    gb.classList.toggle('active', (node.props.truth ?? 0) === tr);
+    gb.addEventListener('click', () => {
+      node.props.truth = tr;
+      node.label = undefined;
+      editor.refresh();
+      renderProps(node);
+    });
+    gateBox.appendChild(gb);
+  }
+  wrap.appendChild(gateBox);
+
+  // clickable truth table
+  const table = document.createElement('table');
+  table.className = 'truth-table';
+  const thead = document.createElement('tr');
+  for (let i = nIn - 1; i >= 0; i--) {
+    const th = document.createElement('th');
+    th.textContent = `in${i}`;
+    thead.appendChild(th);
+  }
+  const thO = document.createElement('th');
+  thO.textContent = 'out';
+  thO.className = 'out-col';
+  thead.appendChild(thO);
+  table.appendChild(thead);
+  for (let v = 0; v < rows; v++) {
+    const tr = document.createElement('tr');
+    for (let i = nIn - 1; i >= 0; i--) {
+      const td = document.createElement('td');
+      td.textContent = String((v >> i) & 1);
+      tr.appendChild(td);
+    }
+    const out = document.createElement('td');
+    const bitv = ((node.props.truth ?? 0) >> v) & 1;
+    out.textContent = String(bitv);
+    out.className = `out-col clickable ${bitv ? 'hi' : 'lo'}`;
+    out.addEventListener('click', () => {
+      node.props.truth = (node.props.truth ?? 0) ^ (1 << v);
+      node.label = undefined;
+      editor.refresh();
+      renderProps(node);
+    });
+    tr.appendChild(out);
+    table.appendChild(tr);
+  }
+  wrap.appendChild(table);
+
+  // hex field stays for power users
+  const label = document.createElement('label');
+  label.textContent = t('p_truth', { n: rows });
+  const inp = document.createElement('input');
+  inp.value = (node.props.truth ?? 0).toString(16).toUpperCase();
+  inp.addEventListener('change', () => {
+    const v = parseInt(inp.value, 16);
+    if (!Number.isNaN(v) && v < 1 << rows) {
+      node.props.truth = v;
+      node.label = undefined;
+      editor.refresh();
+      renderProps(node);
+    }
+  });
+  label.appendChild(inp);
+  wrap.appendChild(label);
+  return wrap;
+}
+
+function renderProps(node: GraphNode | null) {
   propsEl.innerHTML = '';
   if (!node) {
-    propsEl.innerHTML = '<div class="empty">ノードを選択してください</div>';
+    propsEl.innerHTML = `<div class="empty">${t('p_select_node')}</div>`;
     return;
   }
   const title = document.createElement('div');
+  title.className = 'props-title';
   title.textContent = `${NODE_DEFS[node.type].title} (${node.label ?? node.id})`;
   propsEl.appendChild(title);
 
   if (node.type === 'gpio_in' || node.type === 'gpio_out') {
     const label = document.createElement('label');
-    label.textContent = 'ピン番号';
+    label.textContent = t('p_pin');
     const sel = document.createElement('select');
     const candidates = node.type === 'gpio_in' ? PINS.filter((p) => p.inputCapable) : PINS;
     for (const { pin, id } of candidates) {
@@ -128,33 +248,23 @@ editor.onSelect = (node) => {
     propsEl.appendChild(label);
   }
   if (node.type.startsWith('lut')) {
-    const n = Number(node.type[3]);
-    const label = document.createElement('label');
-    label.textContent = `真理値表 (${1 << n}bit, hex)`;
-    const inp = document.createElement('input');
-    inp.value = (node.props.truth ?? 0).toString(16).toUpperCase();
-    inp.addEventListener('change', () => {
-      const v = parseInt(inp.value, 16);
-      if (!Number.isNaN(v) && v < 1 << (1 << n)) {
-        node.props.truth = v;
-        editor.refresh();
-      }
-    });
-    label.appendChild(inp);
-    propsEl.appendChild(label);
+    propsEl.appendChild(buildTruthEditor(node));
   }
   if (node.type === 'dff') {
     const label = document.createElement('label');
     const cb = document.createElement('input');
     cb.type = 'checkbox';
     cb.checked = !!node.props.invertQ;
-    cb.addEventListener('change', () => (node.props.invertQ = cb.checked));
-    label.append(cb, ' 反転出力 (nQ)');
+    cb.addEventListener('change', () => {
+      node.props.invertQ = cb.checked;
+      editor.refresh();
+    });
+    label.append(cb, t('p_invert_q'));
     propsEl.appendChild(label);
   }
   if (node.type === 'virt_in') {
     const label = document.createElement('label');
-    label.textContent = '仮想入力番号';
+    label.textContent = t('p_virt_index');
     const sel = document.createElement('select');
     for (let i = 0; i < 8; i++) {
       const o = document.createElement('option');
@@ -172,16 +282,16 @@ editor.onSelect = (node) => {
   }
   if (node.type === 'osc') {
     const label = document.createElement('label');
-    label.textContent = 'クロック源';
+    label.textContent = t('p_clock_src');
     const sel = document.createElement('select');
-    for (const [v, t] of [
+    for (const [v, txt] of [
       ['osc0_2k', 'OSC0 2.048 kHz'],
       ['osc1_2m', 'OSC1 2.048 MHz'],
       ['osc2_25m', 'OSC2 25 MHz'],
     ]) {
       const o = document.createElement('option');
       o.value = v;
-      o.textContent = t;
+      o.textContent = txt;
       sel.appendChild(o);
     }
     sel.value = node.props.osc ?? 'osc0_2k';
@@ -192,23 +302,24 @@ editor.onSelect = (node) => {
     label.appendChild(sel);
     propsEl.appendChild(label);
   }
-};
-editor.onSelect?.(null);
+}
+editor.onSelect = renderProps;
+renderProps(null);
 
-// --- connection ---------------------------------------------------------
+// --- connection ----------------------------------------------------------
 const btnConnect = $('#btn-connect') as HTMLButtonElement;
 const writeButtons = ['#btn-write-reg', '#btn-write-nvm', '#btn-read-nvm', '#btn-monitor'].map(
   (s) => $(s) as HTMLButtonElement,
 );
 
 function setConnected(c: boolean) {
-  btnConnect.textContent = c ? '切断' : '接続';
+  btnConnect.textContent = t(c ? 'b_disconnect' : 'b_connect');
   btnConnect.classList.toggle('connected', c);
   writeButtons.forEach((b) => (b.disabled = !c));
 }
 bridge.onDisconnect = () => {
   setConnected(false);
-  log('切断されました', 'err');
+  log(t('l_disconnected'), 'err');
 };
 
 btnConnect.addEventListener('click', async () => {
@@ -219,22 +330,22 @@ btnConnect.addEventListener('click', async () => {
   try {
     await bridge.connect();
     const res = await bridge.request({ cmd: 'ping' });
-    log(`接続OK: fw ${res.fw}`, 'ok');
+    log(t('l_connected', { fw: String(res.fw) }), 'ok');
     setConnected(true);
     const scan = await bridge.request({ cmd: 'scan' });
-    log(`I2Cスキャン: [${(scan.found as number[]).map((a) => '0x' + a.toString(16)).join(', ')}]`);
+    log(t('l_scan', { list: (scan.found as number[]).map((a) => '0x' + a.toString(16)).join(', ') }));
   } catch (e) {
-    log(`接続失敗: ${(e as Error).message}`, 'err');
+    log(t('l_conn_failed', { msg: (e as Error).message }), 'err');
     await bridge.disconnect();
   }
 });
 
-// --- settings dialog ----------------------------------------------------
+// --- settings dialog -----------------------------------------------------
 const dlg = $('#settings-dialog') as unknown as HTMLDialogElement;
 $('#btn-settings').addEventListener('click', () => dlg.showModal());
 $('#cfg-apply').addEventListener('click', async () => {
   if (!bridge.connected) {
-    log('未接続のため設定は保留 (接続後に再適用してください)', 'err');
+    log(t('l_cfg_pending'), 'err');
     return;
   }
   try {
@@ -245,20 +356,20 @@ $('#cfg-apply').addEventListener('click', async () => {
       freq: Number(($('#cfg-freq') as unknown as HTMLSelectElement).value),
       save: ($('#cfg-save') as HTMLInputElement).checked,
     });
-    log(`I2C設定: SDA=${res.sda} SCL=${res.scl} ${Number(res.freq) / 1000}kHz`, 'ok');
+    log(t('l_cfg_done', { sda: String(res.sda), scl: String(res.scl), khz: Number(res.freq) / 1000 }), 'ok');
   } catch (e) {
-    log(`設定失敗: ${(e as Error).message}`, 'err');
+    log(t('l_cfg_failed', { msg: (e as Error).message }), 'err');
   }
 });
 
-// --- compile & write ----------------------------------------------------
+// --- compile & write -----------------------------------------------------
 function buildImage(): Uint8Array | null {
   try {
     const { image, warnings } = compile(editor.graph);
-    warnings.forEach((w) => log(`警告: ${w}`, 'err'));
+    warnings.forEach((w) => log(t('l_warn', { msg: w }), 'err'));
     return image;
   } catch (e) {
-    log(`コンパイルエラー: ${(e as Error).message}`, 'err');
+    log(t('l_compile_err', { msg: (e as Error).message }), 'err');
     return null;
   }
 }
@@ -284,23 +395,31 @@ $('#btn-write-reg').addEventListener('click', async () => {
       }
       start = end + 1;
     }
-    log('レジスタ書込完了 (揮発)', 'ok');
+    await pushVirtualInputs();
+    log(t('l_reg_done'), 'ok');
   } catch (e) {
-    log(`書込失敗: ${(e as Error).message}`, 'err');
+    log(t('l_write_failed', { msg: (e as Error).message }), 'err');
   }
 });
 
 $('#btn-write-nvm').addEventListener('click', async () => {
   const image = buildImage();
   if (!image) return;
-  if (!confirm('NVMへ書き込みます。書換回数は約1000回に制限されています。実行しますか?')) return;
+  if (!confirm(t('l_nvm_confirm'))) return;
   try {
     const res = await bridge.request({ cmd: 'nvm_write', data: toHex(image) }, 30000);
     const bad = verifyImage(image, fromHex(res.readback as string));
-    if (bad.length === 0) log('NVM書込+ベリファイOK', 'ok');
-    else log(`ベリファイ不一致: ${bad.length}バイト (${bad.slice(0, 8).map((b) => '0x' + b.toString(16)).join(',')}…)`, 'err');
+    if (bad.length === 0) log(t('l_nvm_ok'), 'ok');
+    else
+      log(
+        t('l_nvm_mismatch', {
+          n: bad.length,
+          bytes: bad.slice(0, 8).map((b) => '0x' + b.toString(16)).join(','),
+        }),
+        'err',
+      );
   } catch (e) {
-    log(`NVM書込失敗: ${(e as Error).message}`, 'err');
+    log(t('l_nvm_failed', { msg: (e as Error).message }), 'err');
   }
 });
 
@@ -312,9 +431,9 @@ $('#btn-read-nvm').addEventListener('click', async () => {
     for (let r = 0; r < 16; r++) {
       dump += r.toString(16).toUpperCase() + '0: ' + toHex(data.slice(r * 16, r * 16 + 16)) + '\n';
     }
-    log('NVM内容:\n' + dump);
+    log(t('l_nvm_dump') + '\n' + dump);
   } catch (e) {
-    log(`読出失敗: ${(e as Error).message}`, 'err');
+    log(t('l_read_failed', { msg: (e as Error).message }), 'err');
   }
 });
 
@@ -328,7 +447,7 @@ async function pushVirtualInputs() {
   try {
     await bridge.request({ cmd: 'reg_write', off: 0x7a, data: byte.toString(16).padStart(2, '0') });
   } catch (e) {
-    log(`仮想入力書込失敗: ${(e as Error).message}`, 'err');
+    log(t('l_virt_failed', { msg: (e as Error).message }), 'err');
   }
 }
 editor.onToggle = (node) => {
@@ -352,7 +471,7 @@ let monitorTimer: number | null = null;
 function setMonitor(on: boolean) {
   if (monitorTimer != null) clearInterval(monitorTimer);
   monitorTimer = null;
-  btnMonitor.textContent = on ? '📡 実機モニタ ON' : '📡 実機モニタ OFF';
+  btnMonitor.textContent = t(on ? 'b_monitor_on' : 'b_monitor_off');
   btnMonitor.classList.toggle('connected', on);
   if (!on) return;
   monitorTimer = window.setInterval(async () => {
@@ -380,27 +499,32 @@ function setMonitor(on: boolean) {
 }
 btnMonitor.addEventListener('click', () => setMonitor(monitorTimer == null));
 
-// --- resource meter -------------------------------------------------------
+// --- resource meter (header gauges) --------------------------------------
 // SLG46826: 19 LUT/DFF macrocells (13 of them DFF-capable), 15 IO pads,
 // 8 I2C virtual inputs.
 function updateMeter() {
   const g = editor.graph;
+  const gauge = (label: string, used: number, total: number) => {
+    const pct = Math.min(100, (used / total) * 100);
+    const over = used > total ? ' over' : '';
+    return (
+      `<div class="gauge${over}"><span class="g-label">${label}</span>` +
+      `<div class="g-bar"><div class="g-fill" style="width:${pct}%"></div></div>` +
+      `<span class="g-num">${used}/${total}</span></div>`
+    );
+  };
   const cells = g.nodes.filter((n) => /^lut|^dff/.test(n.type)).length;
   const dffs = g.nodes.filter((n) => n.type === 'dff').length;
   const pins = g.nodes.filter((n) => n.type === 'gpio_in' || n.type === 'gpio_out').length;
   const virts = g.nodes.filter((n) => n.type === 'virt_in').length;
-  const row = (label: string, used: number, total: number) => {
-    const over = used > total ? ' style="color:var(--danger)"' : '';
-    return `<div class="meter-row"${over}><span>${label}</span><span>${used} / ${total}</span></div>`;
-  };
   $('#meter').innerHTML =
-    row('LUT/DFFセル', cells, 19) +
-    row('うちDFF', dffs, 13) +
-    row('GPIOピン', pins, 15) +
-    row('I2C仮想入力', virts, 8);
+    gauge(t('m_cells'), cells, 19) +
+    gauge(t('m_dff'), dffs, 13) +
+    gauge(t('m_pins'), pins, 15) +
+    gauge(t('m_virt'), virts, 8);
 }
 
-// --- save / load / share --------------------------------------------------
+// --- save / load / share -------------------------------------------------
 $('#btn-save').addEventListener('click', () => {
   const blob = new Blob([JSON.stringify(editor.graph, null, 2)], { type: 'application/json' });
   const a = document.createElement('a');
@@ -416,13 +540,13 @@ fileInput.addEventListener('change', async () => {
   if (!f) return;
   try {
     const g = JSON.parse(await f.text());
-    if (!Array.isArray(g.nodes) || !Array.isArray(g.edges)) throw new Error('形式が不正');
+    if (!Array.isArray(g.nodes) || !Array.isArray(g.edges)) throw new Error(t('l_bad_format'));
     editor.setGraph(g);
     pushHistory();
     updateMeter();
-    log(`読込: ${f.name}`, 'ok');
+    log(t('l_loaded_file', { name: f.name }), 'ok');
   } catch (e) {
-    log(`読込失敗: ${(e as Error).message}`, 'err');
+    log(t('l_load_failed', { msg: (e as Error).message }), 'err');
   }
   fileInput.value = '';
 });
@@ -430,7 +554,7 @@ $('#btn-share').addEventListener('click', async () => {
   const enc = btoa(String.fromCharCode(...new TextEncoder().encode(JSON.stringify(editor.graph))));
   const url = `${location.origin}${location.pathname}#g=${enc}`;
   await navigator.clipboard.writeText(url);
-  log(`共有URLをコピーしました (${url.length}文字)`, 'ok');
+  log(t('l_share_copied', { n: url.length }), 'ok');
 });
 function loadFromHash(): boolean {
   const m = location.hash.match(/#g=(.+)/);
@@ -438,15 +562,15 @@ function loadFromHash(): boolean {
   try {
     const json = new TextDecoder().decode(Uint8Array.from(atob(m[1]), (c) => c.charCodeAt(0)));
     editor.setGraph(JSON.parse(json));
-    log('共有URLからグラフを読み込みました', 'ok');
+    log(t('l_hash_loaded'), 'ok');
     return true;
   } catch {
-    log('共有URLの読み込みに失敗しました', 'err');
+    log(t('l_hash_failed'), 'err');
     return false;
   }
 }
 
-// --- undo / redo ----------------------------------------------------------
+// --- undo / redo ---------------------------------------------------------
 const undoStack: string[] = [JSON.stringify(editor.graph)];
 const redoStack: string[] = [];
 function pushHistory() {
@@ -477,11 +601,11 @@ window.addEventListener('keydown', (e) => {
 });
 
 loadFromHash();
-updateMeter();
+applyI18n();
 
 if (!DB_READY) {
-  log('注意: デバイステーブル整備中のためコンパイル/書込は未有効です', 'err');
+  log('device table not ready', 'err');
 }
 if (!('serial' in navigator)) {
-  log('このブラウザはWebSerial非対応です。Chrome/Edgeを使用してください。', 'err');
+  log(t('l_no_webserial'), 'err');
 }
