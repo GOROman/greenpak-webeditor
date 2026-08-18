@@ -127,6 +127,8 @@ main { flex: 1; display: flex; min-height: 0; }
 .node-gpio_out .node-head { fill: #4d2f1f; }
 .node-lut2 .node-head, .node-lut3 .node-head, .node-lut4 .node-head { fill: #253a5e; }
 .node-dff .node-head { fill: #43305e; }
+.node-virt_in .node-head { fill: #1f4455; }
+.node-osc .node-head { fill: #55401f; }
 .node-vdd .node-head { fill: #5e2530; }
 .node-gnd .node-head { fill: #30343f; }
 .node-title {
@@ -191,6 +193,10 @@ main { flex: 1; display: flex; min-height: 0; }
 }
 .toggle-knob { fill: #aab2c8; }
 .toggle.hi .toggle-knob { fill: var(--hi); filter: drop-shadow(0 0 4px var(--hi)); }
+
+#meter { font-size: 12px; color: var(--muted); }
+.meter-row { display: flex; justify-content: space-between; padding: 2px 0; }
+#btn-monitor.connected { border-color: var(--hi); color: var(--hi); }
 
 #props label { display: block; font-size: 12px; margin: 8px 0; color: var(--muted); }
 #props input, #props select { width: 100%; margin-top: 4px; }

@@ -7,7 +7,9 @@ export type NodeType =
   | 'lut2'
   | 'lut3'
   | 'lut4'
-  | 'dff'       // D flip-flop (nEG macrocell in DFF mode)
+  | 'dff'       // D flip-flop (dual-function macrocell in DFF mode)
+  | 'virt_in'   // I2C virtual input (register byte 0x7A, toggled from the PC)
+  | 'osc'       // internal oscillator routed to the matrix
   | 'vdd'       // constant 1
   | 'gnd';      // constant 0
 
@@ -24,8 +26,12 @@ export interface GraphNode {
     truth?: number;
     /** dff: use inverted output */
     invertQ?: boolean;
-    /** gpio_in: simulated input level for the logic preview */
+    /** gpio_in / virt_in / osc: simulated input level for the logic preview */
     value?: 0 | 1;
+    /** virt_in: I2C virtual input index 0-7 */
+    virtIndex?: number;
+    /** osc: which internal oscillator */
+    osc?: 'osc0_2k' | 'osc1_2m' | 'osc2_25m';
   };
 }
 
@@ -52,6 +58,8 @@ export const NODE_DEFS: Record<
 > = {
   gpio_in: { title: 'IN', inputs: [], outputs: ['out'] },
   gpio_out: { title: 'OUT', inputs: ['in0'], outputs: [] },
+  virt_in: { title: 'I2C', inputs: [], outputs: ['out'] },
+  osc: { title: 'OSC', inputs: [], outputs: ['out'] },
   lut2: { title: 'LUT2', inputs: ['in0', 'in1'], outputs: ['out'] },
   lut3: { title: 'LUT3', inputs: ['in0', 'in1', 'in2'], outputs: ['out'] },
   lut4: { title: 'LUT4', inputs: ['in0', 'in1', 'in2', 'in3'], outputs: ['out'] },

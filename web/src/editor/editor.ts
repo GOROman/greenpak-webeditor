@@ -25,6 +25,8 @@ export class Editor {
   selected: string | null = null; // node id or edge id
   onChange: (() => void) | null = null;
   onSelect: ((node: GraphNode | null) => void) | null = null;
+  /** fired when a gpio_in / virt_in toggle is flipped in the preview */
+  onToggle: ((node: GraphNode) => void) | null = null;
 
   constructor(container: HTMLElement) {
     this.svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -85,7 +87,7 @@ export class Editor {
           y + h > n.y,
       );
     const columns =
-      node.type === 'gpio_in'
+      node.type === 'gpio_in' || node.type === 'virt_in' || node.type === 'osc'
         ? [GRID * 2]
         : node.type === 'gpio_out'
           ? [maxX]
@@ -352,8 +354,8 @@ export class Editor {
     }
     g.appendChild(title);
 
-    // live value badge in the header corner of gpio_out / dff
-    if (node.type === 'gpio_out' || node.type === 'dff') {
+    // live value badge in the header corner of gpio_out / dff / osc
+    if (node.type === 'gpio_out' || node.type === 'dff' || node.type === 'osc') {
       const v = this.sim.values.get(node.id) ?? null;
       const badge = document.createElementNS('http://www.w3.org/2000/svg', 'text');
       badge.classList.add('value-badge', 'corner', triClass(v));
@@ -363,8 +365,8 @@ export class Editor {
       g.appendChild(badge);
     }
 
-    // toggle switch on gpio_in
-    if (node.type === 'gpio_in') {
+    // toggle switch on gpio_in / I2C virtual input
+    if (node.type === 'gpio_in' || node.type === 'virt_in') {
       const v = !!node.props.value;
       const sw = document.createElementNS('http://www.w3.org/2000/svg', 'g');
       sw.classList.add('toggle', v ? 'hi' : 'lo');
@@ -388,6 +390,7 @@ export class Editor {
       sw.append(track, knob, lbl);
       sw.addEventListener('pointerdown', (e) => {
         node.props.value = v ? 0 : 1;
+        this.onToggle?.(node);
         this.simulate();
         this.render();
         e.stopPropagation();
@@ -448,6 +451,11 @@ export class Editor {
     const d = NODE_DEFS[node.type];
     if (node.type === 'gpio_in' || node.type === 'gpio_out') {
       return node.props.pin != null ? `${d.title} P${node.props.pin}` : `${d.title} (pin?)`;
+    }
+    if (node.type === 'virt_in') return `I2C VIN${node.props.virtIndex ?? '?'}`;
+    if (node.type === 'osc') {
+      const f = { osc0_2k: '2.0kHz', osc1_2m: '2.0MHz', osc2_25m: '25MHz' } as const;
+      return `OSC ${f[node.props.osc ?? 'osc0_2k']}`;
     }
     if (node.type.startsWith('lut')) {
       return `${d.title} ${(node.props.truth ?? 0).toString(16).toUpperCase()}h`;

@@ -35,6 +35,8 @@ const paletteItems: { type: NodeType; label: string; truth?: number }[] = [
   { type: 'lut3', label: 'LUT3' },
   { type: 'lut4', label: 'LUT4' },
   { type: 'dff', label: 'D-FF' },
+  { type: 'virt_in', label: 'I2C入力' },
+  { type: 'osc', label: 'OSC' },
   { type: 'vdd', label: 'VDD' },
   { type: 'gnd', label: 'GND' },
 ];
@@ -48,7 +50,7 @@ for (const item of paletteItems) {
       n.props.truth = item.truth;
       n.label = item.label;
     }
-    // auto-assign the first free GPIO pin
+    // auto-assign the first free GPIO pin / virtual input index
     if (n.type === 'gpio_in' || n.type === 'gpio_out') {
       const used = new Set(
         editor.graph.nodes.filter((x) => x.id !== n.id).map((x) => x.props.pin),
@@ -57,6 +59,13 @@ for (const item of paletteItems) {
       const free = pool.find((p) => !used.has(p));
       if (free != null) n.props.pin = free;
     }
+    if (n.type === 'virt_in') {
+      const used = new Set(
+        editor.graph.nodes.filter((x) => x.id !== n.id).map((x) => x.props.virtIndex),
+      );
+      for (let i = 0; i < 8; i++) if (!used.has(i)) { n.props.virtIndex = i; break; }
+    }
+    if (n.type === 'osc') n.props.osc = 'osc0_2k';
     editor.refresh();
   });
   paletteBox.appendChild(b);
@@ -81,6 +90,8 @@ presetSel.addEventListener('change', () => {
   const p = PRESETS.find((pp) => pp.id === presetSel.value);
   if (p) {
     editor.setGraph(p.build());
+    pushHistory();
+    updateMeter();
     log(`プリセット読込: ${p.name}`, 'ok');
   }
 });
@@ -141,12 +152,52 @@ editor.onSelect = (node) => {
     label.append(cb, ' 反転出力 (nQ)');
     propsEl.appendChild(label);
   }
+  if (node.type === 'virt_in') {
+    const label = document.createElement('label');
+    label.textContent = '仮想入力番号';
+    const sel = document.createElement('select');
+    for (let i = 0; i < 8; i++) {
+      const o = document.createElement('option');
+      o.value = String(i);
+      o.textContent = `VIN${i}`;
+      sel.appendChild(o);
+    }
+    sel.value = String(node.props.virtIndex ?? 0);
+    sel.addEventListener('change', () => {
+      node.props.virtIndex = Number(sel.value);
+      editor.refresh();
+    });
+    label.appendChild(sel);
+    propsEl.appendChild(label);
+  }
+  if (node.type === 'osc') {
+    const label = document.createElement('label');
+    label.textContent = 'クロック源';
+    const sel = document.createElement('select');
+    for (const [v, t] of [
+      ['osc0_2k', 'OSC0 2.048 kHz'],
+      ['osc1_2m', 'OSC1 2.048 MHz'],
+      ['osc2_25m', 'OSC2 25 MHz'],
+    ]) {
+      const o = document.createElement('option');
+      o.value = v;
+      o.textContent = t;
+      sel.appendChild(o);
+    }
+    sel.value = node.props.osc ?? 'osc0_2k';
+    sel.addEventListener('change', () => {
+      node.props.osc = sel.value as typeof node.props.osc;
+      editor.refresh();
+    });
+    label.appendChild(sel);
+    propsEl.appendChild(label);
+  }
 };
 editor.onSelect?.(null);
 
 // --- connection ---------------------------------------------------------
 const btnConnect = $('#btn-connect') as HTMLButtonElement;
-const writeButtons = ['#btn-write-reg', '#btn-write-nvm', '#btn-read-nvm'].map(
+const writeButtons = ['#btn-write-reg', '#btn-write-nvm', '#btn-read-nvm', '#btn-monitor'].map(
   (s) => $(s) as HTMLButtonElement,
 );
 
@@ -266,6 +317,167 @@ $('#btn-read-nvm').addEventListener('click', async () => {
     log(`読出失敗: ${(e as Error).message}`, 'err');
   }
 });
+
+// --- I2C virtual inputs: push toggles to the chip when connected ---------
+async function pushVirtualInputs() {
+  if (!bridge.connected) return;
+  let byte = 0;
+  for (const n of editor.graph.nodes) {
+    if (n.type === 'virt_in' && n.props.value) byte |= 1 << (7 - (n.props.virtIndex ?? 0));
+  }
+  try {
+    await bridge.request({ cmd: 'reg_write', off: 0x7a, data: byte.toString(16).padStart(2, '0') });
+  } catch (e) {
+    log(`仮想入力書込失敗: ${(e as Error).message}`, 'err');
+  }
+}
+editor.onToggle = (node) => {
+  if (node.type === 'virt_in') void pushVirtualInputs();
+};
+
+// --- OSC preview blink (visual 2Hz regardless of real frequency) ---------
+setInterval(() => {
+  const oscs = editor.graph.nodes.filter((n) => n.type === 'osc');
+  if (!oscs.length) return;
+  for (const n of oscs) n.props.value = n.props.value ? 0 : 1;
+  editor.refresh();
+}, 250);
+
+// --- live hardware monitor ------------------------------------------------
+// Matrix input values are readable at registers 0x74-0x7B (matrix input N =
+// bit N of that 64-bit window); each GPIO pad's real level drives its
+// gpio_in node so the on-screen logic follows the actual chip.
+const btnMonitor = $('#btn-monitor') as HTMLButtonElement;
+let monitorTimer: number | null = null;
+function setMonitor(on: boolean) {
+  if (monitorTimer != null) clearInterval(monitorTimer);
+  monitorTimer = null;
+  btnMonitor.textContent = on ? '📡 実機モニタ ON' : '📡 実機モニタ OFF';
+  btnMonitor.classList.toggle('connected', on);
+  if (!on) return;
+  monitorTimer = window.setInterval(async () => {
+    if (!bridge.connected) return setMonitor(false);
+    try {
+      const res = await bridge.request({ cmd: 'reg_read', off: 0x74, len: 8 });
+      const bytes = fromHex(res.data as string);
+      let changed = false;
+      for (const n of editor.graph.nodes) {
+        if (n.type !== 'gpio_in') continue;
+        const info = PINS.find((p) => p.pin === n.props.pin);
+        if (!info || info.matrixInputIndex < 0) continue;
+        const N = info.matrixInputIndex;
+        const v: 0 | 1 = (bytes[N >> 3] >> (N & 7)) & 1 ? 1 : 0;
+        if (n.props.value !== v) {
+          n.props.value = v;
+          changed = true;
+        }
+      }
+      if (changed) editor.refresh();
+    } catch {
+      /* transient read errors are fine while polling */
+    }
+  }, 400);
+}
+btnMonitor.addEventListener('click', () => setMonitor(monitorTimer == null));
+
+// --- resource meter -------------------------------------------------------
+// SLG46826: 19 LUT/DFF macrocells (13 of them DFF-capable), 15 IO pads,
+// 8 I2C virtual inputs.
+function updateMeter() {
+  const g = editor.graph;
+  const cells = g.nodes.filter((n) => /^lut|^dff/.test(n.type)).length;
+  const dffs = g.nodes.filter((n) => n.type === 'dff').length;
+  const pins = g.nodes.filter((n) => n.type === 'gpio_in' || n.type === 'gpio_out').length;
+  const virts = g.nodes.filter((n) => n.type === 'virt_in').length;
+  const row = (label: string, used: number, total: number) => {
+    const over = used > total ? ' style="color:var(--danger)"' : '';
+    return `<div class="meter-row"${over}><span>${label}</span><span>${used} / ${total}</span></div>`;
+  };
+  $('#meter').innerHTML =
+    row('LUT/DFFセル', cells, 19) +
+    row('うちDFF', dffs, 13) +
+    row('GPIOピン', pins, 15) +
+    row('I2C仮想入力', virts, 8);
+}
+
+// --- save / load / share --------------------------------------------------
+$('#btn-save').addEventListener('click', () => {
+  const blob = new Blob([JSON.stringify(editor.graph, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'greenpak-graph.json';
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+const fileInput = $('#file-input') as HTMLInputElement;
+$('#btn-load').addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', async () => {
+  const f = fileInput.files?.[0];
+  if (!f) return;
+  try {
+    const g = JSON.parse(await f.text());
+    if (!Array.isArray(g.nodes) || !Array.isArray(g.edges)) throw new Error('形式が不正');
+    editor.setGraph(g);
+    pushHistory();
+    updateMeter();
+    log(`読込: ${f.name}`, 'ok');
+  } catch (e) {
+    log(`読込失敗: ${(e as Error).message}`, 'err');
+  }
+  fileInput.value = '';
+});
+$('#btn-share').addEventListener('click', async () => {
+  const enc = btoa(String.fromCharCode(...new TextEncoder().encode(JSON.stringify(editor.graph))));
+  const url = `${location.origin}${location.pathname}#g=${enc}`;
+  await navigator.clipboard.writeText(url);
+  log(`共有URLをコピーしました (${url.length}文字)`, 'ok');
+});
+function loadFromHash(): boolean {
+  const m = location.hash.match(/#g=(.+)/);
+  if (!m) return false;
+  try {
+    const json = new TextDecoder().decode(Uint8Array.from(atob(m[1]), (c) => c.charCodeAt(0)));
+    editor.setGraph(JSON.parse(json));
+    log('共有URLからグラフを読み込みました', 'ok');
+    return true;
+  } catch {
+    log('共有URLの読み込みに失敗しました', 'err');
+    return false;
+  }
+}
+
+// --- undo / redo ----------------------------------------------------------
+const undoStack: string[] = [JSON.stringify(editor.graph)];
+const redoStack: string[] = [];
+function pushHistory() {
+  undoStack.push(JSON.stringify(editor.graph));
+  if (undoStack.length > 100) undoStack.shift();
+  redoStack.length = 0;
+}
+editor.onChange = () => {
+  pushHistory();
+  updateMeter();
+};
+window.addEventListener('keydown', (e) => {
+  if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'z') return;
+  const tag = (e.target as HTMLElement).tagName;
+  if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+  e.preventDefault();
+  if (e.shiftKey) {
+    if (!redoStack.length) return;
+    const s = redoStack.pop()!;
+    undoStack.push(s);
+    editor.setGraph(JSON.parse(s));
+  } else {
+    if (undoStack.length < 2) return;
+    redoStack.push(undoStack.pop()!);
+    editor.setGraph(JSON.parse(undoStack[undoStack.length - 1]));
+  }
+  updateMeter();
+});
+
+loadFromHash();
+updateMeter();
 
 if (!DB_READY) {
   log('注意: デバイステーブル整備中のためコンパイル/書込は未有効です', 'err');

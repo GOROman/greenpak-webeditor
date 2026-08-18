@@ -32,7 +32,17 @@
         <button id="btn-write-reg" disabled>レジスタへ書込 (揮発)</button>
         <button id="btn-write-nvm" disabled>NVMへ書込 (不揮発)</button>
         <button id="btn-read-nvm" disabled>NVM読出</button>
+        <button id="btn-monitor" disabled>📡 実機モニタ OFF</button>
       </div>
+      <h2>ファイル</h2>
+      <div class="write-buttons">
+        <button id="btn-save">💾 保存 (JSON)</button>
+        <button id="btn-load">📂 読込</button>
+        <button id="btn-share">🔗 共有URLコピー</button>
+        <input id="file-input" type="file" accept=".json" hidden />
+      </div>
+      <h2>リソース</h2>
+      <div id="meter"></div>
     </aside>
     <section id="canvas"></section>
     <aside id="right">

@@ -115,6 +115,28 @@ describe('compile', () => {
     }
   });
 
+  it('routes I2C virtual inputs and enables the oscillator', () => {
+    const g: Graph = {
+      nodes: [
+        { id: 'v', type: 'virt_in', x: 0, y: 0, props: { virtIndex: 2 } },
+        { id: 'o', type: 'osc', x: 0, y: 0, props: { osc: 'osc0_2k' } },
+        { id: 'y1', type: 'gpio_out', x: 0, y: 0, props: { pin: 14 } },
+        { id: 'y2', type: 'gpio_out', x: 0, y: 0, props: { pin: 15 } },
+      ],
+      edges: [
+        { id: 'e1', from: { node: 'v', port: 'out' }, to: { node: 'y1', port: 'in0' } },
+        { id: 'e2', from: { node: 'o', port: 'out' }, to: { node: 'y2', port: 'in0' } },
+      ],
+    };
+    const { image } = compile(g);
+    // IO5 (pin14) out sel 74 <- VIRTUAL_2 = source 53; IO4 (pin15) out sel 72 <- OSC0 = 31
+    expect(field(image, 6 * 74 + 5, 6 * 74)).toBe(53);
+    expect(field(image, 6 * 72 + 5, 6 * 72)).toBe(31);
+    // OSC0 force-on (1040) and matrix-out enable (1049)
+    expect(bit(image, 1040)).toBe(1);
+    expect(bit(image, 1049)).toBe(1);
+  });
+
   it('verifyImage ignores the documented mask bytes', () => {
     const a = new Uint8Array(256);
     const b = new Uint8Array(256);

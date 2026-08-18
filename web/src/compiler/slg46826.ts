@@ -6,6 +6,7 @@ import {
   LUTS,
   LutCell,
   MATRIX_SOURCES,
+  OSC,
   blankImage,
   setBit,
   setField,
@@ -30,12 +31,15 @@ export interface PinInfo {
   pin: number; // DIP module pin number (= TSSOP-20 pin)
   id: string; // IO name
   inputCapable: boolean;
+  /** matrix input index of the pad (readable live at reg 0x74+), -1 for GPO */
+  matrixInputIndex: number;
 }
 
 export const PINS: PinInfo[] = IO_PADS.map((p) => ({
   pin: p.tssopPin,
   id: p.id,
   inputCapable: p.kind === 'GPIO',
+  matrixInputIndex: p.matrixInputIndex,
 })).sort((a, b) => a.pin - b.pin);
 
 /** all logic-usable pins (both directions listed; inputs must be GPIO pads) */
@@ -61,9 +65,24 @@ interface Placement {
   pad?: IoPad;
 }
 
+/** OSC config: matrix source index + force-on / matrix-out-enable bits */
+const OSC_DEFS = {
+  osc0_2k: { src: 31, forceOn: OSC.OSC0_2KHZ.forceOnBit, outEn: OSC.OSC0_2KHZ.matrixOutEnableBit, label: '2.048kHz' },
+  osc1_2m: { src: 30, forceOn: OSC.OSC1_2MHZ.forceOnBit, outEn: OSC.OSC1_2MHZ.matrixOutEnableBit, label: '2.048MHz' },
+  osc2_25m: { src: 32, forceOn: OSC.OSC2_25MHZ.forceOnBit, outEn: OSC.OSC2_25MHZ.matrixOutEnableBit, label: '25MHz' },
+} as const;
+export const OSC_LABELS: Record<string, string> = Object.fromEntries(
+  Object.entries(OSC_DEFS).map(([k, v]) => [k, v.label]),
+);
+
 function sourceIndex(p: Placement): number {
   if (p.node.type === 'vdd') return VDD;
   if (p.node.type === 'gnd') return GND;
+  if (p.node.type === 'virt_in') {
+    // I2C virtual inputs: VIRTUAL_0 = source 55 ... VIRTUAL_7 = source 48
+    return 55 - (p.node.props.virtIndex ?? 0);
+  }
+  if (p.node.type === 'osc') return OSC_DEFS[p.node.props.osc ?? 'osc0_2k'].src;
   if (p.pad) {
     if (p.pad.matrixInputIndex < 0)
       throw new CompileError(`${p.pad.id} は出力専用ピンです (入力に使えません)`);
@@ -98,6 +117,7 @@ export function compile(graph: Graph): CompileResult {
   const DFF_PREF = ['LUT3_0', 'LUT3_1', 'LUT3_2', 'LUT3_3', 'LUT3_4', 'LUT3_5',
     'LUT3_7', 'LUT3_8', 'LUT3_9', 'LUT3_10', 'LUT3_11', 'LUT3_12', 'LUT3_13'];
   const usedPins = new Set<number>();
+  const usedVirt = new Set<number>();
 
   for (const node of graph.nodes) {
     const p: Placement = { node };
@@ -133,6 +153,18 @@ export function compile(graph: Graph): CompileResult {
         p.cell = take(DFF_PREF, 'DFFリソースが不足しています');
         placement[node.id] = p.cell.id;
         break;
+      case 'virt_in': {
+        const vi = node.props.virtIndex;
+        if (vi == null || vi < 0 || vi > 7)
+          throw new CompileError(`${name}: 仮想入力番号(0-7)が未指定です`);
+        if (usedVirt.has(vi)) throw new CompileError(`仮想入力${vi}が重複しています`);
+        usedVirt.add(vi);
+        placement[node.id] = `VIRT${vi}`;
+        break;
+      }
+      case 'osc':
+        placement[node.id] = node.props.osc ?? 'osc0_2k';
+        break;
       case 'vdd':
       case 'gnd':
         break;
@@ -157,6 +189,12 @@ export function compile(graph: Graph): CompileResult {
         const pad = p.pad!;
         // digital input with Schmitt trigger (input mode 01)
         if (pad.cfg.inputMode) setField(image, pad.cfg.inputMode, 0b01);
+        break;
+      }
+      case 'osc': {
+        const o = OSC_DEFS[node.props.osc ?? 'osc0_2k'];
+        setBit(image, o.forceOn, 1);
+        setBit(image, o.outEn, 1);
         break;
       }
       case 'gpio_out': {

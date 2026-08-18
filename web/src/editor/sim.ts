@@ -64,7 +64,11 @@ export class Simulator {
           switch (node.type) {
             case 'vdd': v = true; break;
             case 'gnd': v = false; break;
-            case 'gpio_in': v = !!node.props.value; break;
+            case 'gpio_in':
+            case 'virt_in':
+            case 'osc':
+              v = !!node.props.value;
+              break;
             case 'gpio_out': v = inVal(node.id, 'in0'); break;
             case 'dff': {
               const q = this.dffState.get(node.id) ?? false;
